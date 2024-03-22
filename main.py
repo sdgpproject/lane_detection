@@ -2,6 +2,7 @@ from typing import Optional, List
 
 from fastapi import FastAPI, File, UploadFile
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
 import cv2
 import easyocr
@@ -9,6 +10,15 @@ import numpy as np
 import string
 
 app = FastAPI()
+
+origins = ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Initialize models
 coco_model = YOLO('yolov8n.pt')
@@ -79,7 +89,6 @@ def process_image(frame):
                          'score': license_plate_text_score})
 
     return results
-
 
 
 @app.post("/detect-license-plates/")
