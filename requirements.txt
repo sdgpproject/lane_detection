@@ -1,4 +1,4 @@
-opencv-python==4.9.0.80
+opencv-python-headless
 easyocr==1.7.1
 ultralytics==8.1.30
 numpy==1.26.4
