@@ -1,6 +1,7 @@
 from typing import Optional, List
 
 from fastapi import FastAPI, File, UploadFile
+from mangum import Mangum
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
@@ -10,6 +11,7 @@ import numpy as np
 import string
 
 app = FastAPI()
+handler = Mangum(app)
 
 origins = ["*"]
 app.add_middleware(
