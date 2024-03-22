@@ -1,12 +1,12 @@
 import string
-#
-# import cv2
-# import easyocr
-# import numpy as np
+
+import cv2
+import easyocr
+import numpy as np
 from fastapi import FastAPI, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
-# from ultralytics import YOLO
+from ultralytics import YOLO
 
 app = FastAPI()
 handler = Mangum(app)
@@ -21,9 +21,9 @@ app.add_middleware(
 )
 
 # Initialize models
-# coco_model = YOLO('yolov8n.pt')
-# license_plate_detector = YOLO('best.pt')
-# reader = easyocr.Reader(['en'], gpu=False)
+coco_model = YOLO('yolov8n.pt')
+license_plate_detector = YOLO('best.pt')
+reader = easyocr.Reader(['en'], gpu=False)
 
 # List of vehicle class IDs from COCO dataset that are considered
 vehicles = [2, 3, 5, 7]
