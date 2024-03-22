@@ -22,7 +22,7 @@ app.add_middleware(
 
 # Initialize models
 coco_model = YOLO('yolov8n.pt')
-license_plate_detector = YOLO('best.pt')
+license_plate_detector = YOLO('yolov8n.pt')
 reader = easyocr.Reader(['en'], gpu=False)
 
 # List of vehicle class IDs from COCO dataset that are considered
