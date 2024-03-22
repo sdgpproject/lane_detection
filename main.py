@@ -89,4 +89,7 @@ async def detect_license_plates(file: UploadFile, location: str = "local"):
     image = cv2.imdecode(image, cv2.IMREAD_COLOR)
 
     license_plates = process_image(image)
-    return {"license_plates": license_plates}
+    if not license_plates:
+        return {"license_plates": ""}
+    else:
+        return {"license_plates": license_plates[0]}
