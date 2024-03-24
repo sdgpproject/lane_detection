@@ -1,12 +1,12 @@
-import string
-
-import cv2
-import easyocr
-import numpy as np
 from fastapi import FastAPI, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
-from ultralytics import YOLO
+import v8
+import math
+import cv2
+import easyocr
+import numpy as np
+from deskew import determine_skew
 
 app = FastAPI()
 handler = Mangum(app)
@@ -20,17 +20,50 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize models
-coco_model = YOLO('yolov8n.pt')
-license_plate_detector = YOLO('yolov8n.pt')
 reader = easyocr.Reader(['en'], gpu=False)
 
-# List of vehicle class IDs from COCO dataset that are considered
-vehicles = [2, 3, 5, 7]
 
-# Helper functions
-dict_char_to_int = {'O': '0', 'I': '1', 'J': '3', 'A': '4', 'G': '6', 'S': '5'}
-dict_int_to_char = {v: k for k, v in dict_char_to_int.items()}
+def preprocess_image(img):
+    img = cv2.resize(img, None, fx=1.5, fy=1.2, interpolation=cv2.INTER_CUBIC)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    img = cv2.morphologyEx(img, cv2.MORPH_CLOSE, kernel)
+    smooth = cv2.GaussianBlur(img, (1, 1), 0)
+    return smooth
+
+
+def deskew_plate(image):
+    grayscale = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    angle = determine_skew(grayscale)
+    # print(angle)
+    old_width, old_height = image.shape[:2]
+    angle_radian = math.radians(angle)
+    width = abs(np.sin(angle_radian) * old_height) + abs(np.cos(angle_radian) * old_width)
+    height = abs(np.sin(angle_radian) * old_width) + abs(np.cos(angle_radian) * old_height)
+    image_center = tuple(np.array(image.shape[1::-1]) / 2)
+    rot_mat = cv2.getRotationMatrix2D(image_center, angle, 1.0)
+    rot_mat[1, 2] += (width - old_width) / 2
+    rot_mat[0, 2] += (height - old_height) / 2
+    return cv2.warpAffine(image, rot_mat, (int(round(height)), int(round(width))), borderValue=(0, 0, 0))
+
+
+def text(img):
+    try:
+        text = ""
+        for ele in reader.readtext(img, allowlist='.-0123456789ABCDEFGHJKLMNPQRSTUVWXYZ'):
+            text = text + str(ele[1])
+        print("OCR Success!")
+        return text
+    except:
+        print("OCR Failed!")
+        return " "
+
+
+def detect_objects(img, conf, model_type):
+    model = v8.ANPR_V8("best.pt")
+    plates, image = model.detect(img, conf)
+    return image, plates
 
 
 @app.get("/")
@@ -38,72 +71,40 @@ def read_root():
     return {"Hello": "World"}
 
 
-def license_complies_format(text):
-    if len(text) != 7:
-        return False
-
-    if all((c in string.ascii_uppercase or c in dict_int_to_char) for c in text[:2] + text[4:]) and \
-            all(c.isdigit() or c in dict_char_to_int for c in text[2:4]):
-        return True
-    return False
-
-
-def format_license(text):
-    license_plate_ = ''
-    for i, c in enumerate(text):
-        if i in [2, 3] and c in dict_char_to_int:
-            license_plate_ += dict_char_to_int[c]
-        elif c in dict_int_to_char:
-            license_plate_ += dict_int_to_char[c]
-        else:
-            license_plate_ += c
-    return license_plate_
-
-
-def read_license_plate(license_plate_crop):
-    detections = reader.readtext(license_plate_crop)
-    for bbox, text, score in detections:
-        text = text.upper().replace(' ', '')
-        if license_complies_format(text):
-            return format_license(text), score
-    return None, None
-
-
-def process_image(frame):
-    vehicle_detections = coco_model(frame)[0]
-    vehicle_detections = [d for d in vehicle_detections.boxes.data.tolist() if int(d[5]) in vehicles]
-
-    results = []
-
-    if vehicle_detections:
-        for vehicle in vehicle_detections:
-            x1, y1, x2, y2 = map(int, vehicle[:4])
-            vehicle_crop = frame[y1:y2, x1:x2]
-
-            if vehicle_crop.shape[0] < 50 or vehicle_crop.shape[1] < 50:
-                continue
-
-            license_plates = license_plate_detector(vehicle_crop)[0]
-            for license_plate in license_plates.boxes.data.tolist():
-                lp_x1, lp_y1, lp_x2, lp_y2, lp_score, _ = license_plate
-                license_plate_crop = vehicle_crop[int(lp_y1):int(lp_y2), int(lp_x1):int(lp_x2)]
-                license_plate_text, license_plate_text_score = read_license_plate(license_plate_crop)
-                if license_plate_text:
-                    results.append(
-                        {'bbox': [lp_x1 + x1, lp_y1 + y1, lp_x2 + x1, lp_y2 + y1], 'text': license_plate_text,
-                         'score': license_plate_text_score})
-
-    return results
-
-
 @app.post("/detect-license-plates/")
 async def detect_license_plates(file: UploadFile, location: str = "local"):
     image_bytes = await file.read()
     image = np.frombuffer(image_bytes, dtype=np.uint8)
-    image = cv2.imdecode(image, cv2.IMREAD_COLOR)
+    uploaded_file = cv2.imdecode(image, cv2.IMREAD_COLOR)
+    conf = 0.5
+    model_type = "v8"
+    # uploaded_file = cv2.imread("test_ocr.jpg")
 
-    license_plates = process_image(image)
-    if not license_plates:
-        return {"license_plates": ""}
-    else:
-        return {"license_plates": license_plates[0]}
+    if uploaded_file is not None:
+        is_success, im_buf_arr = cv2.imencode(".jpg", uploaded_file)
+        byte_im = im_buf_arr.tobytes()
+        file_bytes = np.frombuffer(byte_im, dtype=np.uint8)
+
+        image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+        image = deskew_plate(image)
+        output_image, plates = detect_objects(image, conf, model_type)
+        if len(plates):
+            for plate in plates:
+                x1, y1, x2, y2, conf = plate
+                crop_img = output_image[y1:y2, x1:x2]
+                processed_img = preprocess_image(crop_img)
+                result = text(processed_img)
+                print(result)
+
+                print("number plate detected")
+
+                cv2.rectangle(output_image, (x1, y1), (x2, y2), (255, 255, 255), -1)
+                cv2.putText(output_image, f"{result}", (x1 + 7, (y1 + y2) // 2 + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9,
+                            (0, 0, 0), 3, cv2.LINE_AA)
+
+                return {"license_plate": result}
+        else:
+            print("No License Plate Detected")
+            return {"license_plate": "No License Plate Detected"}
